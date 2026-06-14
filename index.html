@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Clipboard Manager | IndexedDB + P2P Smart Sync</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#5686fe">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    /* استایل‌های قبلی بدون تغییر - برای اختصار، همان استایل اصلی استفاده شده است */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg-base: #151517; --sidebar-fill: #1b1b1c; --label-primary: rgba(255,255,255,0.9);
+      --label-secondary: #9ca3af; --label-tertiary: #6b7280; --border-l2: rgba(255,255,255,0.06);
+      --brand-primary: #5686fe; --input-bg: #212123; --hover-bg: rgba(255,255,255,0.04);
+      --scrollbar-bg: #3f3f46; --msg-bg: #2c2c2e; --sidebar-width: 261px;
+      --font-family: 'Inter', system-ui, sans-serif;
+      --radius-sm: 12px; --radius-md: 22px; --radius-lg: 24px; --radius-pill: 100px;
+      --transition: 0.2s cubic-bezier(0.4,0,0.2,1); --danger: #ef4444;
+      --header-height: 60px; --input-area-height: 80px;
+    }
+    body { font-family: var(--font-family); background: var(--bg-base); color: var(--label-primary); height: 100vh; overflow: hidden; display: flex; }
+    .app { display: flex; width: 100%; height: 100vh; position: relative; }
+    .sidebar { width: var(--sidebar-width); height: 100vh; background: var(--sidebar-fill); border-left: 1px solid var(--border-l2); display: flex; flex-direction: column; padding: 6px 12px 10px; flex-shrink: 0; transition: margin-right 0.3s ease; z-index: 20; margin-right: 0; }
+    .sidebar.collapsed { margin-right: calc(var(--sidebar-width) * -1); opacity: 0; pointer-events: none; }
+    .sidebar-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .logo { width: 35px; height: 24px; background: var(--brand-primary); border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #fff; }
+    .btn-new-chat { background: transparent; border: none; color: var(--label-primary); font-size: 14px; font-weight: 500; padding: 8px 14px; border-radius: var(--radius-pill); cursor: pointer; transition: background 0.2s; }
+    .btn-new-chat:hover { background: var(--hover-bg); }
+    .sidebar-clips { flex: 1; overflow-y: auto; margin: 4px 0; }
+    .clip-item { display: flex; align-items: center; height: 40px; padding: 9px 6px 9px 10px; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.2s; margin-bottom: 2px; font-size: 14px; position: relative; white-space: nowrap; }
+    .clip-item:hover { background: var(--hover-bg); }
+    .clip-item.active { background: rgba(86,134,254,0.12); }
+    .clip-item .pin-icon { margin-left: 4px; font-size: 12px; }
+    .clip-item .clip-title { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+    .clip-item .clip-time { font-size: 11px; color: var(--label-secondary); margin-right: 6px; }
+    .clip-item .more-btn { opacity: 0; background: none; border: none; color: var(--label-secondary); cursor: pointer; font-size: 14px; padding: 4px; border-radius: 4px; margin-right: 4px; }
+    .clip-item:hover .more-btn { opacity: 1; }
+    .sidebar-footer { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border-l2); display: flex; flex-direction: column; gap: 8px; }
+    .sync-panel { display: flex; gap: 6px; align-items: center; background: rgba(255,255,255,0.03); border-radius: 12px; padding: 6px; margin-top: 4px; }
+    .sync-btn { flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border-l2); border-radius: 20px; color: var(--label-secondary); font-size: 11px; padding: 5px; cursor: pointer; text-align: center; }
+    .sync-btn:hover { background: var(--brand-primary); color: white; }
+    .sync-status-text { font-size: 10px; color: var(--label-tertiary); text-align: center; margin-top: 2px; }
+    .backup-row { display: flex; gap: 8px; }
+    .backup-btn { flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border-l2); border-radius: var(--radius-sm); color: var(--label-secondary); font-size: 13px; padding: 10px 8px; cursor: pointer; text-align: center; }
+    .footer-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+    .user-profile { display: flex; align-items: center; gap: 8px; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; background: #4b5563; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; }
+    .username { font-size: 14px; font-weight: 500; }
+    .icon-btn { width: 28px; height: 28px; border-radius: 50%; background: transparent; border: none; color: var(--label-secondary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+    .icon-btn:hover { background: var(--hover-bg); color: var(--label-primary); }
+    .main { flex: 1; display: flex; flex-direction: column; height: 100vh; min-width: 0; }
+    .main-header { height: var(--header-height); display: flex; align-items: center; justify-content: space-between; padding: 0 44px; border-bottom: 1px solid transparent; }
+    .main-header.scrolled { border-bottom-color: var(--border-l2); }
+    .menu-toggle { background: none; border: none; color: var(--label-primary); font-size: 20px; cursor: pointer; width: 32px; height: 32px; border-radius: 50%; }
+    .search-input { background: var(--input-bg); border: 1px solid var(--border-l2); border-radius: var(--radius-lg); padding: 8px 16px; font-size: 14px; color: var(--label-primary); width: 220px; outline: none; }
+    .clips-container { flex: 1; overflow-y: auto; padding: 20px 44px; display: flex; justify-content: center; }
+    .clip-detail { width: 100%; max-width: 840px; background: var(--msg-bg); border-radius: var(--radius-md); padding: 20px 24px; border: 1px solid var(--border-l2); }
+    .clip-text { white-space: pre-wrap; margin-bottom: 16px; max-height: 55vh; overflow-y: auto; }
+    .clip-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--label-secondary); border-top: 1px solid var(--border-l2); padding-top: 12px; flex-wrap: wrap; }
+    .clip-actions { display: flex; gap: 6px; }
+    .action-btn { background: transparent; border: none; color: var(--label-secondary); cursor: pointer; font-size: 13px; padding: 4px 10px; border-radius: var(--radius-pill); }
+    .action-btn:hover { background: var(--hover-bg); color: var(--label-primary); }
+    .edit-textarea { width: 100%; min-height: 100px; background: rgba(255,255,255,0.04); border: 2px solid var(--brand-primary); border-radius: 10px; color: white; font-family: monospace; padding: 12px; margin-bottom: 12px; }
+    .empty-main { text-align: center; color: var(--label-tertiary); margin: auto; display: none; flex-direction: column; gap: 12px; }
+    .input-area { padding: 12px 44px 20px; background: var(--bg-base); position: sticky; bottom: 0; display: flex; justify-content: center; }
+    .input-wrapper { width: 100%; max-width: 840px; background: var(--input-bg); border-radius: var(--radius-lg); border: 1px solid var(--border-l2); display: flex; align-items: flex-end; padding: 12px 16px; gap: 10px; }
+    .main-textarea { flex: 1; background: transparent; border: none; resize: none; font-family: var(--font-family); font-size: 16px; color: var(--label-primary); outline: none; max-height: 336px; }
+    .send-btn { background: var(--brand-primary); border: none; color: white; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; }
+    .send-btn:disabled { opacity: 0.5; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(2px); z-index: 100; display: flex; align-items: center; justify-content: center; }
+    .modal { background: #1b1b1c; border-radius: 24px; padding: 24px; width: 380px; max-width: 90vw; color: white; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+    .modal-btn { padding: 8px 20px; border-radius: 20px; border: none; cursor: pointer; }
+    .modal-btn.cancel { background: rgba(255,255,255,0.08); color: white; }
+    .modal-btn.primary { background: var(--brand-primary); color: white; }
+    .modal-btn.danger { background: var(--danger); color: white; }
+    .toast-container { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+    .toast { padding: 10px 20px; border-radius: 20px; background: #333; color: white; font-size: 13px; animation: fadeIn 0.2s, fadeOut 0.2s 1.8s forwards; }
+    @keyframes fadeOut { to { opacity: 0; } }
+    .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 15; }
+    @media (max-width: 768px) {
+      .sidebar { position: fixed; right: 0; top: 0; bottom: 0; z-index: 20; transform: translateX(0); }
+      .sidebar.collapsed { transform: translateX(100%); margin-right: 0; }
+      .sidebar-overlay.active { display: block; }
+      .main-header { padding: 0 16px; }
+      .clips-container { padding: 12px; }
+      .input-area { padding: 8px 12px; }
+      .search-input { width: 120px; }
+    }
+  </style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header"><div class="logo">📋</div><button class="btn-new-chat" id="btnNewClipSidebar">+ کلیپ جدید</button></div>
+    <div class="sidebar-clips" id="sidebarClipsList"></div>
+    <div class="sidebar-footer">
+      <div class="sync-panel">
+        <button class="sync-btn" id="btnHostSync">📡 میزبان</button>
+        <button class="sync-btn" id="btnJoinSync">🔗 اتصال با کد</button>
+      </div>
+      <div id="syncStatusText" class="sync-status-text">🔴 همگام‌سازی غیرفعال</div>
+      <div class="backup-row">
+        <button class="backup-btn" id="btnDownloadBackup">📥 دانلود بکاپ</button>
+        <button class="backup-btn" id="btnUploadBackup">📤 بازگردانی</button>
+      </div>
+      <div class="footer-actions">
+        <div class="user-profile"><div class="avatar">U</div><span class="username">User</span></div>
+        <div><button class="icon-btn" id="btnClearAllSidebar">🗑️</button><button class="icon-btn" id="btnHelp">❓</button></div>
+      </div>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="main-header" id="mainHeader">
+      <div class="header-left"><button class="menu-toggle" id="menuToggle">☰</button><span class="page-title">یادداشت</span></div>
+      <input type="text" class="search-input" id="searchInput" placeholder="جستجو...">
+    </header>
+    <div class="clips-container" id="clipsContainer">
+      <div id="clipDetailContainer" style="width:100%"></div>
+      <div class="empty-main" id="emptyMain">📭 کلیپی انتخاب نشده</div>
+    </div>
+    <div class="input-area">
+      <div class="input-wrapper">
+        <button class="capture-btn" id="btnCapture">📎<span class="spinner"></span></button>
+        <textarea class="main-textarea" id="mainTextarea" rows="1" placeholder="متن جدید (Enter برای ذخیره)"></textarea>
+        <button class="send-btn" id="btnSend" disabled>➤</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- مودال‌ها -->
+<div class="modal-overlay" id="deleteModal" style="display:none"><div class="modal"><h3 id="deleteModalTitle">حذف کلیپ</h3><p id="deleteModalText"></p><div class="modal-actions"><button class="modal-btn cancel" id="deleteCancel">لغو</button><button class="modal-btn danger" id="deleteConfirm">حذف</button></div></div></div>
+<div class="modal-overlay" id="restoreModal" style="display:none"><div class="modal"><h3>بازگردانی بکاپ</h3><p>آیا مطمئن هستید؟</p><div class="modal-actions"><button class="modal-btn cancel" id="restoreCancel">لغو</button><button class="modal-btn primary" id="restoreConfirm">بازگردانی</button></div></div></div>
+<div class="modal-overlay" id="helpModal" style="display:none"><div class="modal"><h3>راهنما</h3><p>همگام‌سازی هوشمند P2P: اطلاعات ادغام می‌شوند و آخرین ویرایش‌ها حفظ می‌گردد.</p><div class="modal-actions"><button class="modal-btn cancel" id="helpClose">بستن</button></div></div></div>
+<div class="toast-container" id="toastContainer"></div>
+<input type="file" id="fileInput" accept=".txt,.md,.csv,.json" multiple style="display:none">
+<input type="file" id="backupFileInput" accept=".json" style="display:none">
+
+<script>
+  (function() {
+    // ---------- IndexedDB ----------
+    const DB_NAME = 'clipnote_smart';
+    const STORE = 'clips';
+    let clips = [];
+    let activeClipId = null;
+    let searchQuery = '';
+    let editingClipId = null;
+    let pendingDeleteId = null;
+    let isComposing = false;
+    let searchTimeout = null;
+
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = reject;
+      });
+    }
+    async function loadClips() { const db = await openDB(); return new Promise(r => { const tx = db.transaction(STORE, 'readonly').objectStore(STORE).get('data'); tx.onsuccess = () => r(tx.result || []); db.close(); }); }
+    async function saveClips(data) { const db = await openDB(); return new Promise(r => { const tx = db.transaction(STORE, 'readwrite').objectStore(STORE).put(data, 'data'); tx.onsuccess = r; db.close(); }); }
+
+    // ---------- PeerJS with Smart Merge ----------
+    let peer = null, currentConnection = null;
+    let syncStatusSpan = document.getElementById('syncStatusText');
+    let btnHost = document.getElementById('btnHostSync'), btnJoin = document.getElementById('btnJoinSync');
+    let peerCodeModal = null, joinCodeModal = null;
+
+    function updateSyncStatus(text, connected = false) {
+      if (syncStatusSpan) {
+        syncStatusSpan.innerHTML = text;
+        syncStatusSpan.style.color = connected ? '#10b981' : '#f97316';
+      }
+    }
+
+    // تابع ادغام هوشمند: دو آرایه را گرفته و آرایه ادغام شده را برمی‌گرداند
+    function mergeClips(localArray, remoteArray) {
+      const map = new Map();
+      // اضافه کردن همه کلیپ‌های محلی
+      for (const clip of localArray) map.set(clip.id, { ...clip });
+      // ادغام کلیپ‌های راه دور
+      for (const remote of remoteArray) {
+        const local = map.get(remote.id);
+        if (!local) {
+          map.set(remote.id, { ...remote });
+        } else {
+          // اگر remote جدیدتر است جایگزین شود
+          if (remote.updatedAt > local.updatedAt) {
+            map.set(remote.id, { ...remote });
+          }
+        }
+      }
+      // تبدیل به آرایه و مرتب‌سازی بر اساس پین و زمان
+      const merged = Array.from(map.values());
+      merged.sort((a,b) => (b.pinned - a.pinned) || (b.updatedAt - a.updatedAt));
+      return merged;
+    }
+
+    async function applySyncAndBroadcast(newClips, sourceConnection) {
+      if (!sourceConnection) return;
+      const merged = mergeClips(clips, newClips);
+      if (JSON.stringify(merged) !== JSON.stringify(clips)) {
+        clips = merged;
+        await saveClips(clips);
+        if (!clips.find(c => c.id === activeClipId)) activeClipId = clips[0]?.id || null;
+        renderAll();
+        showToast('🔄 همگام‌سازی هوشمند انجام شد');
+      }
+      // ارسال نتیجه نهایی به طرف مقابل تا طرف دیگر نیز به روز شود
+      if (currentConnection && currentConnection.open) {
+        currentConnection.send({ type: 'sync', data: clips });
+      }
+    }
+
+    function broadcastChange(type, clipOrId) {
+      if (currentConnection && currentConnection.open) {
+        currentConnection.send({ type, data: clipOrId });
+      }
+    }
+
+    async function handleIncomingMessage(data) {
+      if (data.type === 'sync') {
+        await applySyncAndBroadcast(data.data, currentConnection);
+      } else if (data.type === 'add') {
+        const newClip = data.data;
+        const existing = clips.find(c => c.id === newClip.id);
+        if (!existing) {
+          clips.unshift(newClip);
+          await saveClips(clips);
+          renderAll();
+          showToast('➕ کلیپ جدید از دستگاه دیگر');
+        } else if (newClip.updatedAt > existing.updatedAt) {
+          // به‌روزرسانی در صورت جدیدتر بودن
+          const idx = clips.findIndex(c => c.id === newClip.id);
+          clips[idx] = newClip;
+          await saveClips(clips);
+          renderAll();
+          showToast('✏️ کلیپ به‌روزرسانی شد (دستگاه دیگر)');
+        }
+      } else if (data.type === 'update') {
+        const updated = data.data;
+        const idx = clips.findIndex(c => c.id === updated.id);
+        if (idx !== -1 && updated.updatedAt > clips[idx].updatedAt) {
+          clips[idx] = updated;
+          await saveClips(clips);
+          renderAll();
+          if (activeClipId === updated.id) renderActiveClip();
+          showToast('✏️ ویرایش از راه دور');
+        }
+      } else if (data.type === 'delete') {
+        const id = data.data;
+        if (clips.find(c => c.id === id)) {
+          clips = clips.filter(c => c.id !== id);
+          if (activeClipId === id) activeClipId = clips[0]?.id || null;
+          await saveClips(clips);
+          renderAll();
+          showToast('🗑️ حذف از راه دور');
+        }
+      }
+    }
+
+    function onConnectionEstablished(conn) {
+      currentConnection = conn;
+      updateSyncStatus('✅ همگام‌سازی فعال', true);
+      showToast('🔗 دستگاه متصل شد!');
+      // ارسال داده‌های محلی به طرف مقابل
+      conn.send({ type: 'sync', data: clips });
+      conn.on('data', handleIncomingMessage);
+      conn.on('close', () => { updateSyncStatus('🔴 قطع شد', false); currentConnection = null; showToast('ارتباط قطع شد'); });
+    }
+
+    function setupPeer(initiator = false, targetId = null) {
+      if (peer) peer.destroy();
+      peer = new Peer();
+      peer.on('open', id => {
+        if (initiator && targetId) {
+          const conn = peer.connect(targetId);
+          conn.on('open', () => onConnectionEstablished(conn));
+          conn.on('error', err => { showToast('اتصال ناموفق: ' + err, 'error'); updateSyncStatus('❌ اتصال خطا'); });
+        } else if (!initiator) {
+          updateSyncStatus(`📡 کد: ${id}`, false);
+          if (!peerCodeModal) {
+            const div = document.createElement('div'); div.className = 'modal-overlay'; div.id = 'peerCodeModal';
+            div.innerHTML = `<div class="modal"><h3>کد اتصال</h3><p>این کد را در دستگاه دیگر وارد کنید:</p><div style="background:#000; padding:12px; text-align:center; border-radius:12px; font-family:monospace; font-size:18px" id="peerCodeDisplay"></div><div class="modal-actions"><button class="modal-btn cancel" id="closeCodeModal">بستن</button></div></div>`;
+            document.body.appendChild(div); peerCodeModal = div;
+            document.getElementById('closeCodeModal').addEventListener('click', () => peerCodeModal.style.display = 'none');
+          }
+          document.getElementById('peerCodeDisplay').innerText = id;
+          peerCodeModal.style.display = 'flex';
+          peer.on('connection', conn => { if (!currentConnection) onConnectionEstablished(conn); else conn.close(); });
+        }
+      });
+      peer.on('error', err => { showToast('خطای Peer: ' + err, 'error'); updateSyncStatus('❌ خطا'); });
+    }
+
+    // ---------- توابع اصلی برنامه (با اضافه کردن updatedAt و broadcast) ----------
+    function generateId() { return 'c_' + Date.now() + '_' + Math.random().toString(36).substr(2,6); }
+
+    async function addClip(content) {
+      if (!content.trim()) return;
+      const now = Date.now();
+      const newClip = { id: generateId(), content: content.trim(), createdAt: now, updatedAt: now, pinned: false, title: '' };
+      clips.unshift(newClip);
+      await saveClips(clips);
+      broadcastChange('add', newClip);
+      setActiveClip(newClip.id);
+      mainTextarea.value = ''; mainTextarea.style.height = 'auto';
+      updateSendButton(); showToast('کلیپ جدید ذخیره شد');
+    }
+
+    async function updateClipLocally(clip) {
+      clip.updatedAt = Date.now();
+      const idx = clips.findIndex(c => c.id === clip.id);
+      if (idx !== -1) clips[idx] = clip;
+      await saveClips(clips);
+      broadcastChange('update', clip);
+      renderAll();
+    }
+
+    async function deleteClipLocally(id) {
+      if (editingClipId === id) { editingClipId = null; }
+      clips = clips.filter(c => c.id !== id);
+      if (activeClipId === id) activeClipId = clips[0]?.id || null;
+      await saveClips(clips);
+      broadcastChange('delete', id);
+      renderAll();
+      showToast('🗑️ حذف شد');
+    }
+
+    async function togglePinLocally(id) {
+      const clip = clips.find(c => c.id === id);
+      if (clip) { clip.pinned = !clip.pinned; clip.updatedAt = Date.now(); await updateClipLocally(clip); }
+    }
+
+    async function saveEditLocally(clipId, newContent) {
+      const clip = clips.find(c => c.id === clipId);
+      if (clip) { clip.content = newContent; clip.updatedAt = Date.now(); await updateClipLocally(clip); }
+      editingClipId = null;
+      renderActiveClip();
+    }
+
+    // رندرها (دقیقاً مانند قبل)
+    function getFilteredClips() {
+      let f = [...clips];
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        f = f.filter(c => c.content.toLowerCase().includes(q) || (c.title && c.title.toLowerCase().includes(q)));
+      }
+      f.sort((a,b) => (b.pinned - a.pinned) || (b.updatedAt - a.updatedAt));
+      return f;
+    }
+    function renderSidebar() {
+      const filtered = getFilteredClips();
+      sidebarClipsList.innerHTML = filtered.map(c => `<div class="clip-item ${c.id===activeClipId?'active':''}" data-clip-id="${c.id}">${c.pinned?'📌':''}<span class="clip-title">${escapeHtml(c.title || c.content.slice(0,30))}</span><span class="clip-time">${relativeTime(c.updatedAt)}</span><button class="more-btn" data-action="more">⋯</button></div>`).join('') || '<div style="padding:16px;color:#6b7280">کلیپی نیست</div>';
+    }
+    function renderActiveClip() {
+      const clip = clips.find(c=>c.id===activeClipId);
+      if(!clip){ emptyMain.style.display='flex'; clipDetailContainer.innerHTML=''; return; }
+      emptyMain.style.display='none';
+      if(editingClipId===clip.id){
+        clipDetailContainer.innerHTML = `<div class="clip-detail" data-clip-id="${clip.id}"><textarea class="edit-textarea" id="editTextarea">${escapeHtml(clip.content)}</textarea><div><button class="action-btn save-btn" data-action="save-edit">💾 ذخیره</button><button class="action-btn cancel-btn" data-action="cancel-edit">✖️ لغو</button></div><div class="clip-meta">در حال ویرایش</div></div>`;
+        const ta = document.getElementById('editTextarea'); ta?.focus();
+        ta?.addEventListener('keydown',e=>{ if(e.key==='Escape') cancelEditLocally(); if((e.ctrlKey||e.metaKey)&&e.key==='Enter') saveEditLocally(clip.id, ta.value); });
+      } else {
+        clipDetailContainer.innerHTML = `<div class="clip-detail" data-clip-id="${clip.id}"><div class="clip-text">${escapeHtml(clip.content)}</div><div class="clip-meta"><span>${relativeTime(clip.updatedAt)} · ${clip.pinned?'📌 پین شده':''}</span><div class="clip-actions"><button class="action-btn copy-btn" data-action="copy">📋 کپی</button><button class="action-btn edit-btn" data-action="edit">✏️ ویرایش</button><button class="action-btn" data-action="pin">${clip.pinned?'📌 برداشتن':'📌 پین'}</button><button class="action-btn danger" data-action="delete">🗑️ حذف</button></div></div></div>`;
+      }
+    }
+    function setActiveClip(id) { activeClipId = id; editingClipId = null; renderActiveClip(); renderSidebar(); }
+    function cancelEditLocally() { editingClipId = null; renderActiveClip(); }
+    function renderAll() { renderSidebar(); renderActiveClip(); }
+    function escapeHtml(s){ return s.replace(/[&<>]/g, function(m){ if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m;}); }
+    function relativeTime(ts){ const d=Math.floor((Date.now()-ts)/1000); if(d<60) return 'لحظاتی پیش'; if(d<3600) return Math.floor(d/60)+' دقیقه'; if(d<86400) return Math.floor(d/3600)+' ساعت'; return Math.floor(d/86400)+' روز'; }
+    function showToast(msg,type=''){ const t=document.createElement('div'); t.className='toast'; t.innerText=msg; toastContainer.appendChild(t); setTimeout(()=>t.remove(),2000); }
+    function updateSendButton(){ btnSend.disabled = mainTextarea.value.trim() === ''; }
+
+    // رویدادهای UI
+    const sidebarClipsList = document.getElementById('sidebarClipsList');
+    const clipDetailContainer = document.getElementById('clipDetailContainer');
+    const emptyMain = document.getElementById('emptyMain');
+    const searchInput = document.getElementById('searchInput');
+    const mainTextarea = document.getElementById('mainTextarea');
+    const btnSend = document.getElementById('btnSend');
+    const btnCapture = document.getElementById('btnCapture');
+    const btnNewClipSidebar = document.getElementById('btnNewClipSidebar');
+    const btnClearAllSidebar = document.getElementById('btnClearAllSidebar');
+    const btnHelp = document.getElementById('btnHelp');
+    const btnDownloadBackup = document.getElementById('btnDownloadBackup');
+    const btnUploadBackup = document.getElementById('btnUploadBackup');
+    const menuToggle = document.getElementById('menuToggle');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+    const mainHeader = document.getElementById('mainHeader');
+    const deleteModal = document.getElementById('deleteModal');
+    const deleteCancel = document.getElementById('deleteCancel');
+    const deleteConfirm = document.getElementById('deleteConfirm');
+    const deleteModalTitle = document.getElementById('deleteModalTitle');
+    const deleteModalText = document.getElementById('deleteModalText');
+    const restoreModal = document.getElementById('restoreModal');
+    const restoreCancel = document.getElementById('restoreCancel');
+    const restoreConfirm = document.getElementById('restoreConfirm');
+    const helpModal = document.getElementById('helpModal');
+    const helpClose = document.getElementById('helpClose');
+    const fileInput = document.getElementById('fileInput');
+    const backupFileInput = document.getElementById('backupFileInput');
+    const toastContainer = document.getElementById('toastContainer');
+    const clipsContainer = document.getElementById('clipsContainer');
+
+    sidebarClipsList.addEventListener('click', (e) => {
+      const more = e.target.closest('.more-btn');
+      const item = e.target.closest('.clip-item');
+      if(!item) return;
+      const id = item.dataset.clipId;
+      if(more){ showContextMenu(e,id); return; }
+      if(editingClipId) cancelEditLocally();
+      setActiveClip(id);
+      if(window.innerWidth<=768) closeSidebar();
+    });
+    function showContextMenu(e,id){
+      const menu = document.createElement('div'); menu.className='context-menu'; menu.style.position='fixed'; menu.style.background='#1f1f21'; menu.style.border='1px solid #333'; menu.style.borderRadius='12px'; menu.style.padding='4px'; menu.style.zIndex=200;
+      menu.innerHTML = `<button data-act="copy">📋 کپی</button><button data-act="edit">✏️ ویرایش</button><button data-act="pin">📌 پین/برداشتن</button><button data-act="rename">✏️ تغییر نام</button><button data-act="delete" style="color:#ef4444">🗑️ حذف</button>`;
+      menu.style.top = Math.min(e.clientY, window.innerHeight-200)+'px'; menu.style.left = Math.min(e.clientX, window.innerWidth-160)+'px';
+      document.body.appendChild(menu);
+      menu.addEventListener('click', async (ev) => {
+        const act = ev.target.dataset.act;
+        const clip = clips.find(c=>c.id===id);
+        if(act==='copy'){ if(clip) navigator.clipboard.writeText(clip.content); showToast('کپی شد'); }
+        if(act==='edit'){ setActiveClip(id); editingClipId=id; renderActiveClip(); }
+        if(act==='pin'){ if(clip) await togglePinLocally(id); }
+        if(act==='rename'){ if(clip){ const newTitle = prompt('عنوان جدید:', clip.title||''); if(newTitle!==null){ clip.title = newTitle.trim(); clip.updatedAt = Date.now(); await updateClipLocally(clip); } } }
+        if(act==='delete'){ pendingDeleteId=id; deleteModalText.innerText='آیا حذف شود؟'; deleteModal.style.display='flex'; }
+        menu.remove();
+      });
+      setTimeout(()=>{ document.addEventListener('click',()=>menu.remove(),{once:true}); },100);
+    }
+    clipDetailContainer.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button'); if(!btn) return;
+      const action = btn.dataset.action; const clipId = e.target.closest('.clip-detail')?.dataset.clipId;
+      if(!clipId) return;
+      const clip = clips.find(c=>c.id===clipId);
+      if(action === 'copy'){ navigator.clipboard.writeText(clip.content); showToast('کپی شد'); }
+      if(action === 'edit'){ editingClipId = clipId; renderActiveClip(); }
+      if(action === 'pin'){ await togglePinLocally(clipId); }
+      if(action === 'delete'){ pendingDeleteId=clipId; deleteModalText.innerText='آیا حذف شود؟'; deleteModal.style.display='flex'; }
+      if(action === 'save-edit'){ const ta = document.getElementById('editTextarea'); if(ta) await saveEditLocally(clipId, ta.value); }
+      if(action === 'cancel-edit'){ cancelEditLocally(); }
+    });
+    btnSend.addEventListener('click',()=>{ if(!btnSend.disabled) addClip(mainTextarea.value); });
+    mainTextarea.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey && !isComposing){ e.preventDefault(); if(!btnSend.disabled) addClip(mainTextarea.value); } });
+    mainTextarea.addEventListener('input',()=>{ mainTextarea.style.height='auto'; mainTextarea.style.height=Math.min(mainTextarea.scrollHeight,336)+'px'; updateSendButton(); });
+    mainTextarea.addEventListener('compositionstart',()=>isComposing=true); mainTextarea.addEventListener('compositionend',()=>isComposing=false);
+    btnNewClipSidebar.addEventListener('click',()=>{ if(editingClipId) cancelEditLocally(); mainTextarea.focus(); });
+    btnClearAllSidebar.addEventListener('click',()=>{ if(confirm('همه کلیپ‌ها حذف شوند؟')){ clips=[]; saveClips(clips); activeClipId=null; renderAll(); showToast('همه حذف شدند'); } });
+    btnDownloadBackup.addEventListener('click',()=>{ if(!clips.length) return; const blob = new Blob([JSON.stringify(clips,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`backup_${new Date().toISOString().slice(0,10)}.json`; a.click(); showToast('بکاپ دانلود شد'); });
+    btnUploadBackup.addEventListener('click',()=>backupFileInput.click());
+    backupFileInput.addEventListener('change',()=>{ if(backupFileInput.files.length){ const reader=new FileReader(); reader.onload=e=>{ try{ const data=JSON.parse(e.target.result); if(Array.isArray(data)){ restoreModal.dataset.backupData=JSON.stringify(data); restoreModal.style.display='flex'; } else throw new Error(); }catch{ showToast('فایل نامعتبر'); } }; reader.readAsText(backupFileInput.files[0]); backupFileInput.value=''; } });
+    restoreConfirm.addEventListener('click',async()=>{ const raw=restoreModal.dataset.backupData; if(raw){ clips=JSON.parse(raw); await saveClips(clips); activeClipId=clips[0]?.id||null; renderAll(); showToast('بازگردانی شد'); restoreModal.style.display='none'; } });
+    restoreCancel.addEventListener('click',()=>restoreModal.style.display='none');
+    btnHelp.addEventListener('click',()=>helpModal.style.display='flex');
+    helpClose.addEventListener('click',()=>helpModal.style.display='none');
+    deleteConfirm.addEventListener('click',async()=>{ if(pendingDeleteId) await deleteClipLocally(pendingDeleteId); deleteModal.style.display='none'; });
+    deleteCancel.addEventListener('click',()=>deleteModal.style.display='none');
+    function closeSidebar(){ sidebar.classList.add('collapsed'); sidebarOverlay.classList.remove('active'); }
+    function toggleSidebar(){ if(window.innerWidth<=768){ if(sidebar.classList.contains('collapsed')){ sidebar.classList.remove('collapsed'); sidebarOverlay.classList.add('active'); } else closeSidebar(); } else sidebar.classList.toggle('collapsed'); }
+    menuToggle.addEventListener('click',toggleSidebar);
+    sidebarOverlay.addEventListener('click',closeSidebar);
+    searchInput.addEventListener('input',()=>{ clearTimeout(searchTimeout); searchTimeout=setTimeout(()=>{ searchQuery=searchInput.value; renderSidebar(); const filtered=getFilteredClips(); if(activeClipId && !filtered.find(c=>c.id===activeClipId)) activeClipId=filtered[0]?.id||null; renderActiveClip(); },200); });
+    btnCapture.addEventListener('click',()=>{ navigator.clipboard.readText().then(t=>{ if(t.trim()) addClip(t); else fileInput.click(); }).catch(()=>fileInput.click()); });
+    fileInput.addEventListener('change',()=>{ Array.from(fileInput.files).forEach(f=>{ const r=new FileReader(); r.onload=e=>{ if(e.target.result.trim()) addClip(e.target.result); }; r.readAsText(f); }); fileInput.value=''; });
+    document.addEventListener('dragover',e=>e.preventDefault()); document.addEventListener('drop',e=>{ e.preventDefault(); if(e.dataTransfer.files.length) Array.from(e.dataTransfer.files).forEach(f=>{ const r=new FileReader(); r.onload=ev=>{ if(ev.target.result.trim()) addClip(ev.target.result); }; r.readAsText(f); }); });
+    document.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey) && e.key==='k'){ e.preventDefault(); searchInput.focus(); } });
+
+    // راه‌اندازی اولیه
+    (async()=>{
+      let saved = await loadClips();
+      if(saved && saved.length) clips = saved;
+      else {
+        const now = Date.now();
+        clips = [
+          { id: generateId(), content: 'متن نمونه: این کلیپ همگام‌سازی هوشمند را نشان می‌دهد.', createdAt: now-3600000, updatedAt: now-3600000, pinned: true, title: '' },
+          { id: generateId(), content: 'شماره حساب نمونه', createdAt: now-7200000, updatedAt: now-7200000, pinned: false, title: '' }
+        ];
+        await saveClips(clips);
+      }
+      if(!clips.length) activeClipId = null; else activeClipId = clips[0].id;
+      renderAll();
+    })();
+  })();
+</script>
+<script>if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');</script>
+</body>
+</html>
