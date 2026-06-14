@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Clipboard Manager | IndexedDB + P2P QR Sync</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#5686fe">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    /* ===== استایل‌های اصلی شما (هیچ تغییری نکرده) ===== */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg-base: #151517; --sidebar-fill: #1b1b1c; --label-primary: rgba(255,255,255,0.9);
+      --label-secondary: #9ca3af; --label-tertiary: #6b7280; --border-l2: rgba(255,255,255,0.06);
+      --brand-primary: #5686fe; --input-bg: #212123; --hover-bg: rgba(255,255,255,0.04);
+      --scrollbar-bg: #3f3f46; --msg-bg: #2c2c2e; --sidebar-width: 261px;
+      --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --radius-sm: 12px; --radius-md: 22px; --radius-lg: 24px; --radius-pill: 100px;
+      --transition: 0.2s cubic-bezier(0.4,0,0.2,1); --danger: #ef4444;
+      --header-height: 60px; --input-area-height: 80px;
+    }
+    body {
+      font-family: var(--font-family); background: var(--bg-base); color: var(--label-primary);
+      height: 100vh; overflow: hidden; display: flex; -webkit-font-smoothing: antialiased;
+    }
+    .app { display: flex; width: 100%; height: 100vh; position: relative; }
+    .sidebar {
+      width: var(--sidebar-width); height: 100vh; background: var(--sidebar-fill);
+      border-left: 1px solid var(--border-l2); display: flex; flex-direction: column;
+      padding: 6px 12px 10px; flex-shrink: 0; transition: margin-right 0.3s ease, opacity 0.3s ease;
+      z-index: 20; position: relative; margin-right: 0; opacity: 1;
+    }
+    .sidebar.collapsed { margin-right: calc(var(--sidebar-width) * -1); opacity: 0; pointer-events: none; }
+    .sidebar-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding: 0 2px; }
+    .logo { width: 35px; height: 24px; background: var(--brand-primary); border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #fff; }
+    .btn-new-chat {
+      display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none;
+      color: var(--label-primary); font-family: var(--font-family); font-size: 14px; font-weight: 500;
+      padding: 8px 14px; border-radius: var(--radius-pill); cursor: pointer; transition: background var(--transition); white-space: nowrap;
+    }
+    .btn-new-chat:hover { background: var(--hover-bg); }
+    .sidebar-clips { flex: 1; overflow-y: auto; margin: 4px 0; min-height: 0; }
+    .clip-item {
+      display: flex; align-items: center; height: 40px; padding: 9px 6px 9px 10px;
+      border-radius: var(--radius-sm); cursor: pointer; transition: background var(--transition);
+      margin-bottom: 2px; font-size: 14px; line-height: 18px; color: var(--label-primary);
+      position: relative; white-space: nowrap; overflow: hidden; user-select: none;
+    }
+    .clip-item:hover { background: var(--hover-bg); }
+    .clip-item.active { background: rgba(86,134,254,0.12); }
+    .clip-item .pin-icon { margin-left: 4px; font-size: 12px; flex-shrink: 0; }
+    .clip-item .clip-title { overflow: hidden; text-overflow: ellipsis; flex: 1; font-weight: 400; }
+    .clip-item .clip-time { font-size: 11px; color: var(--label-secondary); margin-right: 6px; flex-shrink: 0; }
+    .clip-item .more-btn {
+      opacity: 0; background: none; border: none; color: var(--label-secondary); cursor: pointer;
+      font-size: 14px; padding: 4px; border-radius: 4px; margin-right: 4px; transition: opacity var(--transition), background var(--transition);
+    }
+    .clip-item:hover .more-btn { opacity: 1; }
+    .clip-item .more-btn:hover { background: var(--hover-bg); color: #fff; }
+    .sidebar-footer {
+      display: flex; flex-direction: column; gap: 8px; margin-top: auto; padding-top: 8px;
+      border-top: 1px solid var(--border-l2);
+    }
+    /* بخش همگام‌سازی اضافه شده */
+    .sync-panel { display: flex; gap: 6px; margin-bottom: 4px; }
+    .sync-btn { flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border-l2); border-radius: 20px; color: var(--label-secondary); font-size: 12px; padding: 6px; cursor: pointer; text-align: center; transition: 0.2s; }
+    .sync-btn:hover { background: var(--brand-primary); color: white; border-color: var(--brand-primary); }
+    .sync-status { font-size: 10px; color: var(--label-tertiary); text-align: center; margin: 4px 0; }
+    /* انتهای بخش اضافه شده */
+    .backup-row {
+      display: flex; gap: 8px; align-items: center;
+    }
+    .backup-btn {
+      flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+      background: rgba(255,255,255,0.05); border: 1px solid var(--border-l2); border-radius: var(--radius-sm);
+      color: var(--label-secondary); font-family: var(--font-family); font-size: 13px; font-weight: 500;
+      padding: 10px 8px; cursor: pointer; transition: all var(--transition);
+    }
+    .backup-btn:hover { background: rgba(255,255,255,0.1); color: var(--label-primary); }
+    .footer-actions {
+      display: flex; gap: 6px; justify-content: space-between; align-items: center;
+    }
+    .icon-btn {
+      width: 28px; height: 28px; border-radius: 50%; background: transparent; border: none;
+      color: var(--label-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: background var(--transition), color var(--transition); font-size: 15px; position: relative;
+    }
+    .icon-btn:hover { background: var(--hover-bg); color: var(--label-primary); }
+    .user-profile { display: flex; align-items: center; gap: 8px; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; background: #4b5563; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; color: #fff; }
+    .username { font-size: 14px; font-weight: 500; }
+    .main { flex: 1; display: flex; flex-direction: column; height: 100vh; background: var(--bg-base); position: relative; min-width: 0; }
+    .main-header {
+      height: var(--header-height); display: flex; align-items: center; justify-content: space-between;
+      padding: 0 44px; background: var(--bg-base); position: sticky; top: 0; z-index: 5; flex-shrink: 0;
+      border-bottom: 1px solid transparent; transition: border-color 0.2s;
+    }
+    .main-header.scrolled { border-bottom-color: var(--border-l2); }
+    .header-left { display: flex; align-items: center; gap: 16px; }
+    .menu-toggle {
+      display: flex; align-items: center; justify-content: center; background: none; border: none;
+      color: var(--label-primary); font-size: 20px; cursor: pointer; padding: 4px; width: 32px; height: 32px; border-radius: 50%;
+      transition: background var(--transition);
+    }
+    .menu-toggle:hover { background: var(--hover-bg); }
+    .page-title { font-size: 16px; font-weight: 600; }
+    .search-input {
+      background: var(--input-bg); border: 1px solid var(--border-l2); border-radius: var(--radius-lg);
+      padding: 8px 16px; font-family: var(--font-family); font-size: 14px; color: var(--label-primary);
+      width: 220px; transition: all var(--transition); outline: none;
+    }
+    .search-input::placeholder { color: var(--label-tertiary); }
+    .search-input:focus { border-color: var(--brand-primary); box-shadow: 0 0 0 2px rgba(86,134,254,0.25); }
+    .clips-container {
+      flex: 1; overflow-y: auto; padding: 20px 44px 28px; display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-start; min-height: 0;
+    }
+    .clip-detail {
+      width: 100%; max-width: 840px; background: var(--msg-bg); border-radius: var(--radius-md);
+      padding: 20px 24px; border: 1px solid var(--border-l2); transition: box-shadow var(--transition);
+      word-break: break-word; line-height: 1.7; font-size: 15px; position: relative;
+      display: flex; flex-direction: column; max-height: calc(100vh - var(--header-height) - var(--input-area-height) - 60px);
+    }
+    .clip-detail:hover { box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+    .clip-detail .clip-text { white-space: pre-wrap; margin-bottom: 16px; flex: 1; overflow-y: auto; min-height: 60px; max-height: 55vh; padding: 4px 0; word-break: break-word; }
+    .clip-detail .clip-meta { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--label-secondary); border-top: 1px solid var(--border-l2); padding-top: 12px; flex-shrink: 0; flex-wrap: wrap; gap: 8px; }
+    .clip-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .action-btn {
+      background: transparent; border: none; color: var(--label-secondary); cursor: pointer;
+      font-size: 13px; padding: 4px 10px; border-radius: var(--radius-pill); transition: all var(--transition);
+      display: flex; align-items: center; gap: 4px; font-family: var(--font-family); white-space: nowrap;
+    }
+    .action-btn:hover { background: var(--hover-bg); color: var(--label-primary); }
+    .action-btn.copy-btn { color: var(--brand-primary); }
+    .action-btn.copy-btn.copied { color: #10b981; }
+    .action-btn.edit-btn { color: #f59e0b; }
+    .action-btn.save-btn { color: #10b981; font-weight: 600; }
+    .action-btn.cancel-btn { color: var(--label-secondary); }
+    .action-btn.danger { color: var(--danger); }
+    .edit-textarea {
+      width: 100%; min-height: 100px; background: rgba(255,255,255,0.04); border: 2px solid var(--brand-primary);
+      border-radius: 10px; color: var(--label-primary); font-family: var(--font-family); font-size: 15px;
+      line-height: 1.7; padding: 12px; resize: vertical; outline: none; margin-bottom: 12px; transition: border-color var(--transition);
+    }
+    .edit-textarea:focus { border-color: #7ba0ff; box-shadow: 0 0 0 3px rgba(86,134,254,0.15); }
+    .edit-actions-row { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+    .empty-main { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--label-tertiary); gap: 12px; text-align: center; margin: auto; }
+    .empty-main svg { opacity: 0.3; }
+    .input-area {
+      position: sticky; bottom: 0; background: var(--bg-base); padding: 12px 44px 20px;
+      display: flex; justify-content: center; z-index: 5; flex-shrink: 0;
+    }
+    .input-wrapper {
+      width: 100%; max-width: 840px; background: var(--input-bg); border-radius: var(--radius-lg);
+      border: 1px solid var(--border-l2); display: flex; align-items: flex-end; padding: 12px 16px;
+      gap: 10px; transition: border-color var(--transition);
+    }
+    .input-wrapper:focus-within { border-color: var(--brand-primary); box-shadow: 0 0 0 2px rgba(86,134,254,0.2); }
+    .main-textarea {
+      flex: 1; background: transparent; border: none; resize: none; font-family: var(--font-family);
+      font-size: 16px; line-height: 24px; color: var(--label-primary); outline: none; min-height: 24px; max-height: 336px; overflow-y: auto;
+    }
+    .main-textarea::placeholder { color: var(--label-tertiary); }
+    .main-textarea:disabled { opacity: 0.6; cursor: not-allowed; }
+    .send-btn {
+      width: 28px; height: 28px; border-radius: 50%; background: var(--brand-primary); border: none;
+      color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: opacity var(--transition), background var(--transition); flex-shrink: 0;
+    }
+    .send-btn:disabled { opacity: 0.45; cursor: not-allowed; background: #4b5563; }
+    .send-btn:not(:disabled):hover { background: #4a74e0; }
+    .capture-btn {
+      width: 28px; height: 28px; border-radius: 50%; background: transparent; border: none;
+      color: var(--label-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: all var(--transition); position: relative;
+    }
+    .capture-btn:hover { background: var(--hover-bg); color: var(--label-primary); }
+    .capture-btn.loading { pointer-events: none; }
+    .spinner {
+      display: none; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; position: absolute;
+    }
+    .capture-btn.loading .spinner { display: block; }
+    .capture-btn.loading .btn-icon-content { visibility: hidden; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(2px);
+      z-index: 100; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .modal {
+      background: #1b1b1c; border-radius: 24px; padding: 24px; width: 380px; max-width: 90vw;
+      color: #fff; box-shadow: 0 20px 50px rgba(0,0,0,0.5); animation: slideUp 0.25s ease;
+    }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(30px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    .modal h3 { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+    .modal p { font-size: 14px; color: var(--label-secondary); margin-bottom: 20px; line-height: 1.5; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 12px; }
+    .modal-btn { padding: 8px 20px; border-radius: 20px; font-family: var(--font-family); font-size: 14px; font-weight: 500; cursor: pointer; border: none; transition: background var(--transition); }
+    .modal-btn.cancel { background: rgba(255,255,255,0.08); color: #fff; }
+    .modal-btn.cancel:hover { background: rgba(255,255,255,0.15); }
+    .modal-btn.primary { background: var(--brand-primary); color: #fff; }
+    .modal-btn.primary:hover { background: #4a74e0; }
+    .modal-btn.danger { background: var(--danger); color: #fff; }
+    .modal-btn.danger:hover { background: #dc2626; }
+    .context-menu {
+      position: fixed; background: #1f1f21; border: 1px solid var(--border-l2); border-radius: 12px;
+      padding: 4px; z-index: 150; min-width: 140px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); animation: fadeIn 0.1s ease;
+    }
+    .context-menu button {
+      display: block; width: 100%; background: none; border: none; color: var(--label-primary);
+      padding: 8px 12px; text-align: right; font-family: var(--font-family); font-size: 13px;
+      border-radius: 8px; cursor: pointer; transition: background var(--transition);
+    }
+    .context-menu button:hover { background: var(--hover-bg); }
+    .context-menu button.danger { color: var(--danger); }
+    .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 15; }
+    @media (max-width: 768px) {
+      .sidebar { position: fixed; right: 0; top: 0; bottom: 0; z-index: 20; transition: transform 0.3s ease; margin-right: 0; transform: translateX(0); opacity: 1; pointer-events: auto; }
+      .sidebar.collapsed { transform: translateX(100%); margin-right: 0; }
+      .sidebar-overlay.active { display: block; }
+      .main-header { padding: 0 16px; }
+      .clips-container { padding: 12px 12px 20px; }
+      .input-area { padding: 8px 12px 14px; }
+      .search-input { width: 120px; font-size: 13px; }
+      .clip-detail { max-height: calc(100vh - var(--header-height) - 100px); padding: 14px 16px; }
+      .clip-detail .clip-text { max-height: 40vh; }
+      .clip-actions { gap: 2px; }
+      .action-btn { font-size: 11px; padding: 3px 8px; }
+      .edit-textarea { font-size: 14px; min-height: 80px; }
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--scrollbar-bg); border-radius: 10px; }
+    .toast-container { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+    .toast {
+      padding: 10px 20px; border-radius: 20px; font-size: 13px; font-weight: 500; background: #333; color: #fff;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3); animation: toastIn 0.3s ease, toastOut 0.3s ease 1.8s forwards; white-space: nowrap;
+    }
+    .toast.error { background: #7f1d1d; color: #fca5a5; }
+    @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
+    /* اضافه شده برای مودال QR */
+    .qr-container { display: flex; justify-content: center; margin: 16px 0; }
+    #qrcode { padding: 12px; background: white; border-radius: 16px; display: inline-block; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">📋</div>
+      <button class="btn-new-chat" id="btnNewClipSidebar">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 1v14M1 8h14"/></svg>
+        New clip
+      </button>
+    </div>
+    <div class="sidebar-clips" id="sidebarClipsList"></div>
+    <div class="sidebar-footer">
+      <!-- بخش همگام‌سازی QR اضافه شده -->
+      <div class="sync-panel">
+        <button class="sync-btn" id="btnShowQR">📱 نمایش QR (میزبان)</button>
+        <button class="sync-btn" id="btnScanQR">📷 اسکن QR (اتصال)</button>
+      </div>
+      <div id="syncStatus" class="sync-status">🔴 همگام‌سازی غیرفعال</div>
+      <div class="backup-row">
+        <button class="backup-btn" id="btnDownloadBackup" title="دانلود فایل پشتیبان (JSON)">📥 دانلود بکاپ</button>
+        <button class="backup-btn" id="btnUploadBackup" title="بازگردانی از فایل پشتیبان">📤 بازگردانی</button>
+      </div>
+      <div class="footer-actions">
+        <div class="user-profile">
+          <div class="avatar">U</div>
+          <span class="username">User</span>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button class="icon-btn" id="btnClearAllSidebar" title="حذف همه کلیپ‌ها">🗑️</button>
+          <button class="icon-btn" id="btnHelp" title="راهنما">❓</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="main-header" id="mainHeader">
+      <div class="header-left">
+        <button class="menu-toggle" id="menuToggle" title="باز/بسته کردن سایدبار">☰</button>
+        <span class="page-title">یادداشت</span>
+      </div>
+      <input type="text" class="search-input" id="searchInput" placeholder="جستجو در کلیپ‌ها...">
+    </header>
+    <div class="clips-container" id="clipsContainer">
+      <div id="clipDetailContainer" style="width:100%;display:flex;justify-content:center;"></div>
+      <div class="empty-main" id="emptyMain" style="display:none;">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+        <span>کلیپی انتخاب نشده است</span>
+      </div>
+    </div>
+    <div class="input-area">
+      <div class="input-wrapper">
+        <button class="capture-btn" id="btnCapture" title="آپلود فایل یا دریافت از کلیپ‌بورد">
+          <span class="btn-icon-content">📎</span>
+          <span class="spinner"></span>
+        </button>
+        <textarea class="main-textarea" id="mainTextarea" rows="1" placeholder="متن خود را وارد کنید... (Enter برای ذخیره)"></textarea>
+        <button class="send-btn" id="btnSend" disabled title="ذخیره کلیپ">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 8L14 1.5 8.5 14 6.5 9.5 1.5 8z"/></svg>
+        </button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- مودال‌ها -->
+<div class="modal-overlay" id="deleteModal" style="display: none;">
+  <div class="modal">
+    <h3 id="deleteModalTitle">حذف کلیپ</h3>
+    <p id="deleteModalText">آیا از حذف این کلیپ اطمینان دارید؟</p>
+    <div class="modal-actions">
+      <button class="modal-btn cancel" id="deleteCancel">لغو</button>
+      <button class="modal-btn danger" id="deleteConfirm">حذف</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="restoreModal" style="display: none;">
+  <div class="modal">
+    <h3>بازگردانی بکاپ</h3>
+    <p>آیا مطمئن هستید که می‌خواهید همه کلیپ‌های فعلی با محتوای فایل جایگزین شوند؟</p>
+    <div class="modal-actions">
+      <button class="modal-btn cancel" id="restoreCancel">لغو</button>
+      <button class="modal-btn primary" id="restoreConfirm">بازگردانی</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="helpModal" style="display: none;">
+  <div class="modal">
+    <h3>راهنما</h3>
+    <p style="font-size:13px;line-height:1.8;">
+      <strong>میانبرها:</strong><br>
+      • Enter: ذخیره کلیپ جدید<br>
+      • Shift+Enter: خط جدید<br>
+      • Ctrl+K: جستجو<br>
+      • کلیک روی آیتم سایدبار: نمایش کلیپ<br>
+      • دابل‌کلیک روی متن: کپی سریع<br>
+      • ✏️ دکمه ویرایش: ادیت متن کلیپ<br>
+      • تغییر نام: فقط عنوان سایدبار تغییر می‌کند<br>
+      • 📥 دانلود بکاپ | 📤 بازگردانی بکاپ<br>
+      🔄 <strong>همگام‌سازی با QR:</strong> در یک دستگاه «نمایش QR» و در دستگاه دیگر «اسکن QR» را بزنید.
+    </p>
+    <div class="modal-actions"><button class="modal-btn cancel" id="helpClose">بستن</button></div>
+  </div>
+</div>
+<!-- مودال QR و اسکنر -->
+<div class="modal-overlay" id="qrModal" style="display: none;">
+  <div class="modal">
+    <h3>QR Code میزبان</h3>
+    <div class="qr-container"><div id="qrcode"></div></div>
+    <p style="font-size:12px;text-align:center">این QR را با دستگاه دیگر اسکن کنید</p>
+    <div class="modal-actions"><button class="modal-btn cancel" id="closeQRModal">بستن</button></div>
+  </div>
+</div>
+<div class="modal-overlay" id="scannerModal" style="display: none;">
+  <div class="modal" style="width: 90%; max-width: 400px">
+    <h3>اسکن QR</h3>
+    <div id="qr-reader" style="width:100%"></div>
+    <div class="modal-actions"><button class="modal-btn cancel" id="closeScannerModal">لغو</button></div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+<input type="file" id="fileInput" accept=".txt,.md,.csv,.json,.log,.html,.css,.js,.py,.cpp" multiple style="display:none;">
+<input type="file" id="backupFileInput" accept=".json" style="display:none;">
+
+<script>
+  // ====================== کد اصلی شما (با قابلیت همگام‌سازی QR اضافه شده) ======================
+  (function() {
+    // IndexedDB setup
+    const DB_NAME = 'clipboardManagerDB';
+    const DB_VERSION = 1;
+    const STORE_NAME = 'clips';
+    const DATA_KEY = 'mainData';
+
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (event) => {
+          const db = event.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        };
+        request.onsuccess = (event) => resolve(event.target.result);
+        request.onerror = (event) => reject(event.target.error);
+      });
+    }
+
+    async function loadClipsFromDB() {
+      try {
+        const db = await openDB();
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const getRequest = store.get(DATA_KEY);
+        return new Promise((resolve, reject) => {
+          getRequest.onsuccess = () => resolve(getRequest.result);
+          getRequest.onerror = () => reject(getRequest.error);
+          transaction.oncomplete = () => db.close();
+        });
+      } catch (error) {
+        return null;
+      }
+    }
+
+    async function saveClipsToDB(clipsArray) {
+      try {
+        const db = await openDB();
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        store.put(clipsArray, DATA_KEY);
+        return new Promise((resolve, reject) => {
+          transaction.oncomplete = () => { db.close(); resolve(); };
+          transaction.onerror = () => { reject(transaction.error); db.close(); };
+        });
+      } catch (error) {
+        showToast('❌ خطا در ذخیره‌سازی پایگاه داده', 'error');
+      }
+    }
+
+    async function migrateFromLocalStorage() {
+      const oldData = localStorage.getItem('deepseek_clipboard_v3');
+      if (oldData) {
+        try {
+          const parsed = JSON.parse(oldData);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(c => { if (c.title === undefined) c.title = ''; });
+            await saveClipsToDB(parsed);
+            localStorage.removeItem('deepseek_clipboard_v3');
+            return parsed;
+          }
+        } catch (e) {}
+      }
+      return null;
+    }
+
+    // DOM elements
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+    const menuToggle = document.getElementById('menuToggle');
+    const sidebarClipsList = document.getElementById('sidebarClipsList');
+    const clipDetailContainer = document.getElementById('clipDetailContainer');
+    const emptyMain = document.getElementById('emptyMain');
+    const searchInput = document.getElementById('searchInput');
+    const mainTextarea = document.getElementById('mainTextarea');
+    const btnSend = document.getElementById('btnSend');
+    const btnCapture = document.getElementById('btnCapture');
+    const btnNewClipSidebar = document.getElementById('btnNewClipSidebar');
+    const btnClearAllSidebar = document.getElementById('btnClearAllSidebar');
+    const btnHelp = document.getElementById('btnHelp');
+    const btnDownloadBackup = document.getElementById('btnDownloadBackup');
+    const btnUploadBackup = document.getElementById('btnUploadBackup');
+    const mainHeader = document.getElementById('mainHeader');
+    const deleteModal = document.getElementById('deleteModal');
+    const deleteCancel = document.getElementById('deleteCancel');
+    const deleteConfirm = document.getElementById('deleteConfirm');
+    const deleteModalTitle = document.getElementById('deleteModalTitle');
+    const deleteModalText = document.getElementById('deleteModalText');
+    const restoreModal = document.getElementById('restoreModal');
+    const restoreCancel = document.getElementById('restoreCancel');
+    const restoreConfirm = document.getElementById('restoreConfirm');
+    const helpModal = document.getElementById('helpModal');
+    const helpClose = document.getElementById('helpClose');
+    const fileInput = document.getElementById('fileInput');
+    const backupFileInput = document.getElementById('backupFileInput');
+    const toastContainer = document.getElementById('toastContainer');
+    const clipsContainer = document.getElementById('clipsContainer');
+
+    let clips = [];
+    let activeClipId = null;
+    let searchQuery = '';
+    let pendingDeleteId = null;
+    let isComposing = false;
+    let editingClipId = null;
+    let editingOriginalContent = '';
+    let searchTimeout = null;
+
+    // ========== بخش همگام‌سازی P2P با QR ==========
+    let peer = null;
+    let currentConnection = null;
+    let syncStatusSpan = document.getElementById('syncStatus');
+    const btnShowQR = document.getElementById('btnShowQR');
+    const btnScanQR = document.getElementById('btnScanQR');
+    const qrModal = document.getElementById('qrModal');
+    const scannerModal = document.getElementById('scannerModal');
+    const closeQRModal = document.getElementById('closeQRModal');
+    const closeScannerModal = document.getElementById('closeScannerModal');
+    let html5QrCode = null;
+
+    function updateSyncStatus(text, isConnected = false) {
+      if (syncStatusSpan) {
+        syncStatusSpan.innerHTML = text;
+        syncStatusSpan.style.color = isConnected ? '#10b981' : '#f97316';
+      }
+    }
+
+    // ادغام هوشمند (بر اساس updatedAt)
+    function mergeClips(localArray, remoteArray) {
+      const map = new Map();
+      for (const clip of localArray) map.set(clip.id, { ...clip });
+      for (const remote of remoteArray) {
+        const local = map.get(remote.id);
+        if (!local) map.set(remote.id, { ...remote });
+        else if (remote.updatedAt > local.updatedAt) map.set(remote.id, { ...remote });
+      }
+      const merged = Array.from(map.values());
+      merged.sort((a,b) => (b.pinned - a.pinned) || (b.updatedAt - a.updatedAt));
+      return merged;
+    }
+
+    async function applySyncAndBroadcast(newClips) {
+      if (!currentConnection) return;
+      const merged = mergeClips(clips, newClips);
+      if (JSON.stringify(merged) !== JSON.stringify(clips)) {
+        clips = merged;
+        await saveClipsToDB(clips);
+        if (!clips.find(c => c.id === activeClipId)) activeClipId = clips[0]?.id || null;
+        renderSidebar();
+        renderActiveClip();
+        showToast('🔄 همگام‌سازی هوشمند انجام شد');
+      }
+      if (currentConnection.open) {
+        currentConnection.send({ type: 'sync', data: clips });
+      }
+    }
+
+    function broadcastToPeer(type, data) {
+      if (currentConnection && currentConnection.open) {
+        currentConnection.send({ type, data });
+      }
+    }
+
+    async function handlePeerMessage(msg) {
+      if (msg.type === 'sync') {
+        await applySyncAndBroadcast(msg.data);
+      } else if (msg.type === 'add') {
+        const newClip = msg.data;
+        const existing = clips.find(c => c.id === newClip.id);
+        if (!existing) {
+          clips.unshift(newClip);
+          await saveClipsToDB(clips);
+          renderSidebar();
+          if (activeClipId === newClip.id) renderActiveClip();
+          showToast('➕ کلیپ جدید از راه دور');
+        } else if (newClip.updatedAt > existing.updatedAt) {
+          const idx = clips.findIndex(c => c.id === newClip.id);
+          clips[idx] = newClip;
+          await saveClipsToDB(clips);
+          renderSidebar();
+          if (activeClipId === newClip.id) renderActiveClip();
+          showToast('✏️ کلیپ به‌روز شد (راه دور)');
+        }
+      } else if (msg.type === 'update') {
+        const updated = msg.data;
+        const idx = clips.findIndex(c => c.id === updated.id);
+        if (idx !== -1 && updated.updatedAt > clips[idx].updatedAt) {
+          clips[idx] = updated;
+          await saveClipsToDB(clips);
+          renderSidebar();
+          if (activeClipId === updated.id) renderActiveClip();
+          showToast('✏️ ویرایش از راه دور');
+        }
+      } else if (msg.type === 'delete') {
+        const id = msg.data;
+        if (clips.find(c => c.id === id)) {
+          clips = clips.filter(c => c.id !== id);
+          if (activeClipId === id) activeClipId = clips[0]?.id || null;
+          await saveClipsToDB(clips);
+          renderSidebar();
+          renderActiveClip();
+          showToast('🗑️ حذف از راه دور');
+        }
+      }
+    }
+
+    function onConnectionEstablished(conn) {
+      currentConnection = conn;
+      updateSyncStatus('✅ همگام‌سازی فعال', true);
+      showToast('🔗 دستگاه متصل شد!');
+      conn.send({ type: 'sync', data: clips });
+      conn.on('data', handlePeerMessage);
+      conn.on('close', () => {
+        updateSyncStatus('🔴 قطع شد', false);
+        currentConnection = null;
+        showToast('ارتباط قطع شد');
+      });
+    }
+
+    function startHost() {
+      if (peer) peer.destroy();
+      peer = new Peer();
+      peer.on('open', id => {
+        const qrDiv = document.getElementById('qrcode');
+        qrDiv.innerHTML = '';
+        new QRCode(qrDiv, { text: id, width: 200, height: 200 });
+        qrModal.style.display = 'flex';
+        updateSyncStatus(`📡 میزبان (ID: ${id.substring(0,8)}...)`, false);
+        peer.on('connection', conn => {
+          if (!currentConnection) onConnectionEstablished(conn);
+          else conn.close();
+        });
+      });
+      peer.on('error', err => { showToast('خطا: ' + err, 'error'); updateSyncStatus('❌ خطا', false); });
+    }
+
+    function startScan() {
+      scannerModal.style.display = 'flex';
+      if (html5QrCode) {
+        html5QrCode.stop().catch(()=>{});
+      }
+      html5QrCode = new Html5Qrcode("qr-reader");
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        (decodedText) => {
+          html5QrCode.stop().catch(()=>{});
+          scannerModal.style.display = 'none';
+          if (peer) peer.destroy();
+          peer = new Peer();
+          peer.on('open', () => {
+            const conn = peer.connect(decodedText);
+            conn.on('open', () => onConnectionEstablished(conn));
+            conn.on('error', err => { showToast('اتصال ناموفق: ' + err, 'error'); updateSyncStatus('❌ اتصال خطا'); });
+          });
+          peer.on('error', err => { showToast('خطای peer: ' + err, 'error'); });
+        },
+        (error) => { console.warn(error); }
+      ).catch(err => { showToast('دسترسی به دوربین ممکن نیست', 'error'); scannerModal.style.display = 'none'; });
+    }
+
+    closeQRModal.addEventListener('click', () => { qrModal.style.display = 'none'; });
+    closeScannerModal.addEventListener('click', () => { if (html5QrCode) html5QrCode.stop().catch(()=>{}); scannerModal.style.display = 'none'; });
+    btnShowQR.addEventListener('click', startHost);
+    btnScanQR.addEventListener('click', startScan);
+
+    // توابع اصلی (تغییر داده شده برای اضافه کردن updatedAt و broadcast)
+    function generateId() { return 'clip_' + Date.now() + '_' + Math.random().toString(36).substr(2,6); }
+
+    async function addClip(content) {
+      if (!content.trim()) return;
+      const now = Date.now();
+      const newClip = { id: generateId(), content: content.trim(), createdAt: now, updatedAt: now, pinned: false, title: '' };
+      clips.unshift(newClip);
+      await saveClipsToDB(clips);
+      broadcastToPeer('add', newClip);
+      if (editingClipId) { editingClipId = null; editingOriginalContent = ''; }
+      setActiveClip(newClip.id);
+      mainTextarea.value = ''; mainTextarea.style.height = 'auto';
+      updateSendButton(); showToast('کلیپ جدید ذخیره شد');
+    }
+
+    async function updateClipAndBroadcast(clip) {
+      clip.updatedAt = Date.now();
+      const idx = clips.findIndex(c => c.id === clip.id);
+      if (idx !== -1) clips[idx] = clip;
+      await saveClipsToDB(clips);
+      broadcastToPeer('update', clip);
+      renderSidebar();
+      if (activeClipId === clip.id) renderActiveClip();
+    }
+
+    async function deleteClipAndBroadcast(id) {
+      if (editingClipId === id) { editingClipId = null; editingOriginalContent = ''; }
+      const wasActive = activeClipId === id;
+      clips = clips.filter(c => c.id !== id);
+      if (wasActive) activeClipId = clips.length > 0 ? clips[0].id : null;
+      await saveClipsToDB(clips);
+      broadcastToPeer('delete', id);
+      renderSidebar(); renderActiveClip(); showToast('🗑️ حذف شد');
+    }
+
+    // بازنویسی توابع اصلی که در کد شما وجود دارند تا از توابع جدید استفاده کنند
+    async function togglePin(clipId) {
+      const clip = clips.find(c => c.id === clipId);
+      if (clip) { clip.pinned = !clip.pinned; await updateClipAndBroadcast(clip); }
+    }
+
+    async function saveEdit(clipId) {
+      const editTextarea = document.getElementById('editTextarea');
+      if (!editTextarea) return;
+      const newContent = editTextarea.value.trim();
+      if (!newContent) { showToast('⚠️ متن نمی‌تواند خالی باشد', 'error'); return; }
+      const clip = clips.find(c => c.id === clipId);
+      if (clip) { clip.content = newContent; await updateClipAndBroadcast(clip); }
+      editingClipId = null; editingOriginalContent = '';
+      renderActiveClip(); showToast('✅ تغییرات ذخیره شد');
+    }
+
+    async function renameClip(clipId) {
+      const clip = clips.find(c => c.id === clipId);
+      if (!clip) return;
+      const currentTitle = clip.title || truncateText(clip.content, 30);
+      const newTitle = prompt('عنوان جدید برای یادداشت (خالی بگذارید تا از متن اصلی استفاده شود):', currentTitle);
+      if (newTitle !== null) {
+        clip.title = newTitle.trim();
+        await updateClipAndBroadcast(clip);
+        showToast(newTitle.trim() ? 'عنوان تغییر کرد' : 'عنوان حذف شد');
+      }
+    }
+
+    // بقیه توابع رندر و رویدادها دقیقاً مثل قبل (فقط ارجاعات به deleteClip و ... را به توابع جدید تغییر می‌دهیم)
+    // برای اینکه کد طولانی نشود، من فقط توابعی که تغییر کرده‌اند را نشان می‌دهم.
+    // اما در کد نهایی که ارائه می‌دهم، همه چیز یکپارچه است.
+
+    // توابع رندر و کمکی (بدون تغییر)
+    function getFilteredClips() {
+      let filtered = [...clips];
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        filtered = filtered.filter(c => c.content.toLowerCase().includes(q) || (c.title && c.title.toLowerCase().includes(q)));
+      }
+      filtered.sort((a,b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return b.updatedAt - a.updatedAt;
+      });
+      return filtered;
+    }
+
+    function renderSidebar() {
+      const filtered = getFilteredClips();
+      let html = '';
+      if (filtered.length === 0) {
+        html = '<div style="padding:16px;color:var(--label-tertiary);font-size:13px;">کلیپی یافت نشد</div>';
+      } else {
+        filtered.forEach(clip => {
+          const displayTitle = clip.title && clip.title.trim() ? clip.title : truncateText(clip.content, 30);
+          html += `
+            <div class="clip-item ${clip.id === activeClipId ? 'active' : ''}" data-clip-id="${clip.id}">
+              ${clip.pinned ? '<span class="pin-icon">📌</span>' : ''}
+              <span class="clip-title">${escapeHtml(displayTitle)}</span>
+              <span class="clip-time">${relativeTime(clip.updatedAt)}</span>
+              <button class="more-btn" data-action="more" title="گزینه‌های بیشتر">⋯</button>
+            </div>
+          `;
+        });
+      }
+      sidebarClipsList.innerHTML = html;
+    }
+
+    function renderActiveClip() {
+      clipDetailContainer.innerHTML = '';
+      const clip = clips.find(c => c.id === activeClipId);
+      if (clip) {
+        emptyMain.style.display = 'none';
+        const isEditing = (editingClipId === clip.id);
+        let detailHTML = '';
+        if (isEditing) {
+          detailHTML = `
+            <div class="clip-detail" data-clip-id="${clip.id}">
+              <textarea class="edit-textarea" id="editTextarea">${escapeHtml(clip.content)}</textarea>
+              <div class="edit-actions-row">
+                <button class="action-btn save-btn" data-action="save-edit">✔️ ذخیره تغییرات</button>
+                <button class="action-btn cancel-btn" data-action="cancel-edit">✖️ لغو</button>
+              </div>
+              <div class="clip-meta" style="margin-top:8px;">
+                <span>${relativeTime(clip.updatedAt)} · ${clip.content.length} کاراکتر ${clip.pinned ? '· 📌 پین شده' : ''} · ✏️ در حال ویرایش</span>
+              </div>
+            </div>
+          `;
+        } else {
+          detailHTML = `
+            <div class="clip-detail" data-clip-id="${clip.id}">
+              <div class="clip-text">${escapeHtml(clip.content)}</div>
+              <div class="clip-meta">
+                <span>${relativeTime(clip.updatedAt)} · ${clip.content.length} کاراکتر ${clip.pinned ? '· 📌 پین شده' : ''}${clip.title ? ' · عنوان: ' + escapeHtml(clip.title) : ''}</span>
+                <div class="clip-actions">
+                  <button class="action-btn copy-btn" data-action="copy">📋 کپی</button>
+                  <button class="action-btn edit-btn" data-action="edit">✏️ ویرایش</button>
+                  <button class="action-btn" data-action="pin">${clip.pinned ? '📌 برداشتن' : '📌 پین'}</button>
+                  <button class="action-btn danger" data-action="delete">🗑️ حذف</button>
+                </div>
+              </div>
+            </div>
+          `;
+        }
+        clipDetailContainer.innerHTML = detailHTML;
+
+        if (isEditing) {
+          const editTextarea = document.getElementById('editTextarea');
+          editTextarea.focus();
+          editTextarea.setSelectionRange(editTextarea.value.length, editTextarea.value.length);
+          editTextarea.style.height = 'auto';
+          editTextarea.style.height = Math.max(100, Math.min(editTextarea.scrollHeight, 400)) + 'px';
+          editTextarea.addEventListener('input', () => {
+            editTextarea.style.height = 'auto';
+            editTextarea.style.height = Math.max(100, Math.min(editTextarea.scrollHeight, 400)) + 'px';
+          });
+          editTextarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); cancelEdit(clip.id); }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); saveEdit(clip.id); }
+          });
+        } else {
+          const clipTextEl = clipDetailContainer.querySelector('.clip-text');
+          if (clipTextEl) clipTextEl.addEventListener('dblclick', () => copyClip(clip.id));
+        }
+      } else {
+        emptyMain.style.display = 'flex';
+        editingClipId = null;
+      }
+      renderSidebar();
+    }
+
+    function setActiveClip(clipId) { activeClipId = clipId; renderActiveClip(); }
+    function startEdit(clipId) { const clip = clips.find(c => c.id === clipId); if (clip) { editingClipId = clipId; editingOriginalContent = clip.content; renderActiveClip(); } }
+    function cancelEdit(clipId) {
+      const clip = clips.find(c => c.id === clipId);
+      if (clip && editingOriginalContent) clip.content = editingOriginalContent;
+      editingClipId = null; editingOriginalContent = '';
+      renderActiveClip(); showToast('لغو ویرایش');
+    }
+    function saveEditBeforeSwitch(nextClipId) {
+      if (!editingClipId) return;
+      const editTextarea = document.getElementById('editTextarea');
+      if (editTextarea) {
+        const val = editTextarea.value.trim();
+        if (val) { const clip = clips.find(c => c.id === editingClipId); if (clip) { clip.content = val; updateClipAndBroadcast(clip); } }
+      }
+      editingClipId = null; editingOriginalContent = '';
+    }
+
+    function copyClip(clipId, btnEl) {
+      const clip = clips.find(c => c.id === clipId);
+      if (!clip) return;
+      navigator.clipboard.writeText(clip.content).then(() => {
+        if (btnEl) { btnEl.classList.add('copied'); btnEl.textContent = '✅ کپی شد'; setTimeout(() => { btnEl.classList.remove('copied'); btnEl.textContent = '📋 کپی'; }, 1500); }
+        showToast('✅ کپی شد');
+      }).catch(() => {
+        const ta = document.createElement('textarea'); ta.value = clip.content; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        showToast('✅ کپی شد');
+      });
+    }
+
+    // حذف کامل همه
+    async function deleteAllClips() {
+      if (clips.length) openDeleteAllModal();
+    }
+    async function confirmDeleteAll() {
+      clips = []; activeClipId = null; editingClipId = null; editingOriginalContent = '';
+      await saveClipsToDB(clips);
+      broadcastToPeer('sync', clips); // broadcast empty array
+      renderSidebar(); renderActiveClip(); showToast('همه کلیپ‌ها حذف شدند');
+    }
+
+    // بکاپ و بازگردانی (بدون تغییر)
+    function downloadBackup() {
+      if (!clips.length) { showToast('هیچ کلیپی وجود ندارد', 'error'); return; }
+      const blob = new Blob([JSON.stringify(clips, null, 2)], {type:'application/json'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = `clipboard_backup_${new Date().toISOString().slice(0,10)}.json`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      showToast('📥 فایل پشتیبان دانلود شد');
+    }
+    function uploadBackup() { backupFileInput.click(); }
+    function handleBackupFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (!Array.isArray(data)) throw new Error();
+          data.forEach(item => { if (item.title === undefined) item.title = ''; if (!item.updatedAt) item.updatedAt = item.createdAt || Date.now(); });
+          restoreModal.dataset.backupData = JSON.stringify(data);
+          restoreModal.style.display = 'flex';
+        } catch { showToast('⚠️ فایل نامعتبر است', 'error'); }
+      };
+      reader.readAsText(file);
+    }
+    async function confirmRestore() {
+      const raw = restoreModal.dataset.backupData;
+      if (!raw) return;
+      try {
+        clips = JSON.parse(raw);
+        await saveClipsToDB(clips);
+        broadcastToPeer('sync', clips);
+        editingClipId = null; editingOriginalContent = '';
+        activeClipId = clips.length ? clips[0].id : null;
+        renderSidebar(); renderActiveClip();
+        showToast('✅ بکاپ با موفقیت بازگردانی شد');
+      } catch { showToast('⚠️ خطا در بازگردانی', 'error'); }
+      finally { restoreModal.style.display = 'none'; restoreModal.dataset.backupData = ''; }
+    }
+    function cancelRestore() { restoreModal.style.display = 'none'; restoreModal.dataset.backupData = ''; }
+
+    function openDeleteModal(clipId) {
+      pendingDeleteId = clipId;
+      deleteModalTitle.textContent = 'حذف کلیپ';
+      deleteModalText.textContent = 'آیا از حذف این کلیپ اطمینان دارید؟';
+      deleteModal.style.display = 'flex';
+    }
+    function closeDeleteModal() { pendingDeleteId = null; deleteModal.style.display = 'none'; }
+    function openDeleteAllModal() {
+      pendingDeleteId = '__ALL__';
+      deleteModalTitle.textContent = 'حذف همه کلیپ‌ها';
+      deleteModalText.textContent = `آیا از حذف همه ${clips.length} کلیپ اطمینان دارید؟`;
+      deleteModal.style.display = 'flex';
+    }
+
+    deleteConfirm.addEventListener('click', async () => {
+      if (pendingDeleteId === '__ALL__') {
+        await confirmDeleteAll();
+      } else if (pendingDeleteId) {
+        await deleteClipAndBroadcast(pendingDeleteId);
+      }
+      closeDeleteModal();
+    });
+    deleteCancel.addEventListener('click', closeDeleteModal);
+    deleteModal.addEventListener('click', e => { if (e.target === deleteModal) closeDeleteModal(); });
+    restoreConfirm.addEventListener('click', confirmRestore);
+    restoreCancel.addEventListener('click', cancelRestore);
+    restoreModal.addEventListener('click', e => { if (e.target === restoreModal) cancelRestore(); });
+    btnHelp.addEventListener('click', () => helpModal.style.display = 'flex');
+    helpClose.addEventListener('click', () => helpModal.style.display = 'none');
+    helpModal.addEventListener('click', e => { if (e.target === helpModal) helpModal.style.display = 'none'; });
+
+    function showContextMenu(e, clipId) {
+      const existing = document.querySelector('.context-menu');
+      if (existing) existing.remove();
+      const menu = document.createElement('div');
+      menu.className = 'context-menu';
+      menu.innerHTML = `
+        <button data-action="copy">📋 کپی</button>
+        <button data-action="edit">✏️ ویرایش</button>
+        <button data-action="pin">📌 پین/برداشتن</button>
+        <button data-action="rename">✏️ تغییر نام</button>
+        <button data-action="delete" class="danger">🗑️ حذف</button>
+      `;
+      menu.style.top = Math.min(e.clientY, window.innerHeight-200) + 'px';
+      menu.style.left = Math.min(e.clientX, window.innerWidth-160) + 'px';
+      document.body.appendChild(menu);
+      menu.addEventListener('click', async ev => {
+        const action = ev.target.dataset.action;
+        if (action === 'copy') copyClip(clipId);
+        else if (action === 'edit') { if (editingClipId && editingClipId !== clipId) saveEditBeforeSwitch(clipId); setActiveClip(clipId); startEdit(clipId); }
+        else if (action === 'pin') togglePin(clipId);
+        else if (action === 'rename') renameClip(clipId);
+        else if (action === 'delete') openDeleteModal(clipId);
+        menu.remove();
+      });
+      setTimeout(() => {
+        const close = ev => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('click', close); } };
+        document.addEventListener('click', close);
+      }, 0);
+    }
+
+    function handleFiles(files) {
+      if (!files.length) return;
+      btnCapture.classList.add('loading');
+      mainTextarea.disabled = true; btnSend.disabled = true;
+      const readers = [];
+      Array.from(files).forEach(file => {
+        if (file.size > 10*1024*1024) { showToast('⚠️ فایل بزرگتر از ۱۰ مگابایت نادیده گرفته شد', 'error'); return; }
+        const reader = new FileReader();
+        readers.push(new Promise(resolve => { reader.onload = e => resolve(e.target.result); reader.onerror = () => resolve(null); reader.readAsText(file); }));
+      });
+      Promise.all(readers).then(contents => {
+        contents.forEach(text => { if (text && text.trim()) addClip(text.trim()); });
+        btnCapture.classList.remove('loading'); mainTextarea.disabled = false; updateSendButton();
+        if (contents.length === 0) showToast('⚠️ هیچ فایل متنی قابل خواندنی یافت نشد', 'error');
+      });
+    }
+
+    btnCapture.addEventListener('click', () => {
+      if (btnCapture.classList.contains('loading')) return;
+      navigator.clipboard.readText().then(text => { if (text && text.trim()) addClip(text.trim()); else fileInput.click(); }).catch(() => fileInput.click());
+    });
+    fileInput.addEventListener('change', () => { handleFiles(fileInput.files); fileInput.value = ''; });
+    document.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); });
+    document.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files); });
+
+    function updateSendButton() { btnSend.disabled = mainTextarea.value.trim() === ''; }
+
+    function showToast(msg, type='') {
+      const toast = document.createElement('div'); toast.className = 'toast' + (type ? ' ' + type : ''); toast.textContent = msg;
+      toastContainer.appendChild(toast); setTimeout(() => toast.remove(), 2200);
+    }
+
+    function escapeHtml(str) { const div = document.createElement('div'); div.textContent = str; return div.innerHTML; }
+    function truncateText(text, maxLen) { return text.length <= maxLen ? text : text.substring(0, maxLen).trim() + '…'; }
+    function relativeTime(ts) {
+      const diff = Date.now() - ts;
+      const mins = Math.floor(diff/60000), hours = Math.floor(diff/3600000), days = Math.floor(diff/86400000);
+      if (mins < 1) return 'اکنون';
+      if (mins < 60) return `${mins} دقیقه`;
+      if (hours < 24) return `${hours} ساعت`;
+      if (days === 1) return 'دیروز';
+      if (days < 7) return `${days} روز`;
+      return new Date(ts).toLocaleDateString('fa-IR', { month:'short', day:'numeric' });
+    }
+    function handleMainScroll(e) { mainHeader.classList.toggle('scrolled', e.target.scrollTop > 5); }
+    function closeSidebar() { sidebar.classList.add('collapsed'); sidebarOverlay.classList.remove('active'); }
+    function toggleSidebar() {
+      if (window.innerWidth <= 768) {
+        if (sidebar.classList.contains('collapsed')) { sidebar.classList.remove('collapsed'); sidebarOverlay.classList.add('active'); }
+        else closeSidebar();
+      } else sidebar.classList.toggle('collapsed');
+    }
+
+    function bindEvents() {
+      menuToggle.addEventListener('click', toggleSidebar);
+      sidebarOverlay.addEventListener('click', closeSidebar);
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+          if (editingClipId && document.activeElement?.id === 'editTextarea') { cancelEdit(editingClipId); return; }
+          if (!sidebar.classList.contains('collapsed') && window.innerWidth <= 768) closeSidebar();
+          if (deleteModal.style.display === 'flex') closeDeleteModal();
+          if (helpModal.style.display === 'flex') helpModal.style.display = 'none';
+          if (restoreModal.style.display === 'flex') cancelRestore();
+          if (qrModal.style.display === 'flex') qrModal.style.display = 'none';
+          if (scannerModal.style.display === 'flex') { if (html5QrCode) html5QrCode.stop().catch(()=>{}); scannerModal.style.display = 'none'; }
+        }
+      });
+      searchInput.addEventListener('input', () => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+          searchQuery = searchInput.value;
+          renderSidebar();
+          const filtered = getFilteredClips();
+          if (activeClipId && !filtered.find(c => c.id === activeClipId)) {
+            activeClipId = filtered.length ? filtered[0].id : null;
+            editingClipId = null; renderActiveClip();
+          }
+        }, 200);
+      });
+      mainTextarea.addEventListener('input', () => {
+        mainTextarea.style.height = 'auto';
+        mainTextarea.style.height = Math.min(mainTextarea.scrollHeight, 336) + 'px';
+        updateSendButton();
+      });
+      mainTextarea.addEventListener('compositionstart', () => isComposing = true);
+      mainTextarea.addEventListener('compositionend', () => isComposing = false);
+      mainTextarea.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+          e.preventDefault();
+          if (!btnSend.disabled) addClip(mainTextarea.value);
+        }
+      });
+      btnSend.addEventListener('click', () => { if (!btnSend.disabled) addClip(mainTextarea.value); });
+      btnNewClipSidebar.addEventListener('click', () => {
+        if (editingClipId) saveEditBeforeSwitch(null);
+        mainTextarea.value = ''; mainTextarea.style.height = 'auto'; updateSendButton();
+        mainTextarea.focus(); if (window.innerWidth <= 768) closeSidebar();
+      });
+      btnClearAllSidebar.addEventListener('click', () => { if (clips.length) openDeleteAllModal(); });
+      btnDownloadBackup.addEventListener('click', downloadBackup);
+      btnUploadBackup.addEventListener('click', uploadBackup);
+      backupFileInput.addEventListener('change', () => {
+        if (backupFileInput.files.length) { handleBackupFile(backupFileInput.files[0]); backupFileInput.value = ''; }
+      });
+      document.addEventListener('keydown', e => { if ((e.ctrlKey||e.metaKey) && e.key === 'k') { e.preventDefault(); searchInput.focus(); } });
+      
+      // رویدادهای کلیک روی سایدبار و جزئیات
+      sidebarClipsList.addEventListener('click', (e) => {
+        const moreBtn = e.target.closest('.more-btn');
+        const clipItem = e.target.closest('.clip-item');
+        if (!clipItem) return;
+        const clipId = clipItem.dataset.clipId;
+        if (moreBtn) {
+          e.stopPropagation();
+          showContextMenu(e, clipId);
+          return;
+        }
+        if (editingClipId && editingClipId !== clipId) saveEditBeforeSwitch(clipId);
+        setActiveClip(clipId);
+        if (window.innerWidth <= 768) closeSidebar();
+      });
+      sidebarClipsList.addEventListener('contextmenu', (e) => {
+        const clipItem = e.target.closest('.clip-item');
+        if (clipItem) {
+          e.preventDefault();
+          showContextMenu(e, clipItem.dataset.clipId);
+        }
+      });
+      clipDetailContainer.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        const clipDetail = e.target.closest('.clip-detail');
+        if (!clipDetail) return;
+        const clipId = clipDetail.dataset.clipId;
+        if (!clipId) return;
+        if (action === 'copy') copyClip(clipId, btn);
+        else if (action === 'edit') startEdit(clipId);
+        else if (action === 'pin') togglePin(clipId);
+        else if (action === 'delete') openDeleteModal(clipId);
+        else if (action === 'save-edit') saveEdit(clipId);
+        else if (action === 'cancel-edit') cancelEdit(clipId);
+      });
+    }
+
+    async function init() {
+      let storedClips = await loadClipsFromDB();
+      if (!storedClips || storedClips.length === 0) {
+        const migrated = await migrateFromLocalStorage();
+        if (migrated && migrated.length) storedClips = migrated;
+      }
+      if (storedClips && Array.isArray(storedClips)) {
+        // اطمینان از وجود updatedAt برای کلیپ‌های قدیمی
+        storedClips.forEach(c => { if (!c.updatedAt) c.updatedAt = c.createdAt || Date.now(); });
+        clips = storedClips;
+      } else {
+        const now = Date.now();
+        clips = [
+          { id: generateId(), content: 'متن نمونه: می‌توانید این متن را کپی کنید.', createdAt: now - 3600000, updatedAt: now - 3600000, pinned: true, title: '' },
+          { id: generateId(), content: 'شماره حساب: ۶۰۳۷-۹۹۱۸-۲۲۴۵-۱۰۳۲\nبانک ملت\nبه نام: علی محمدی', createdAt: now - 7200000, updatedAt: now - 7200000, pinned: false, title: '' },
+          { id: generateId(), content: 'لورم ایپسوم متن ساختگی با تولید سادگی نامفهوم.', createdAt: now - 86400000, updatedAt: now - 86400000, pinned: false, title: '' },
+        ];
+        await saveClipsToDB(clips);
+      }
+      if (clips.length && !activeClipId) activeClipId = clips[0].id;
+      renderSidebar();
+      renderActiveClip();
+      bindEvents();
+      updateSendButton();
+      clipsContainer.addEventListener('scroll', handleMainScroll);
+    }
+
+    init();
+  })();
+</script>
+<!-- Service Worker registration -->
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('SW registered:', reg))
+      .catch(err => console.log('SW error:', err));
+  }
+</script>
+</body>
+</html>
